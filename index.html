@@ -552,18 +552,12 @@ body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: v
       <h3 style="font-size:15px;font-weight:700">GitHub Sync Settings</h3>
       <span onclick="closeSettings()" style="cursor:pointer;font-size:18px;color:#94A3B8">✕</span>
     </div>
-    <p style="font-size:12px;color:#64748B;line-height:1.6">Sync your planner to a GitHub repository so all friends can see updates in real time. Create a public repo on GitHub, set the repo name below, and enter your Personal Access Token.</p>
-    <div style="display:flex;flex-direction:column;gap:6px">
-      <label style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:.05em">GitHub Personal Access Token</label>
-      <input id="settings-token-input" type="password" placeholder="github_pat_…" style="border:1px solid #E2E8F0;border-radius:5px;padding:8px 10px;font-size:13px;outline:none;font-family:monospace">
-      <span style="font-size:11px;color:#94A3B8">Token needs <code>repo</code> scope. Stored only in this browser's localStorage.</span>
+    <p style="font-size:12px;color:#64748B;line-height:1.6">This planner syncs automatically via Supabase. No setup needed — all devices stay in sync in real time.</p>
+    <div style="background:#F0FDF4;border:1px solid #86EFAC;border-radius:6px;padding:12px;font-size:12px;color:#15803D">
+      ✓ Connected to Supabase · Syncing every 5 seconds
     </div>
-    <div style="display:flex;gap:8px;justify-content:space-between;align-items:center">
-      <button class="btn btn-danger-ghost btn-sm" onclick="clearToken()">Clear token</button>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-ghost btn-sm" onclick="closeSettings()">Cancel</button>
-        <button class="btn btn-primary btn-sm" onclick="saveToken()">Save & Sync</button>
-      </div>
+    <div style="display:flex;justify-content:flex-end">
+      <button class="btn btn-ghost btn-sm" onclick="closeSettings()">Close</button>
     </div>
     <div id="settings-msg" style="font-size:12px;display:none"></div>
   </div>
@@ -633,8 +627,9 @@ body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: v
 // ═══════════════════════════════════════════════════
 const STORAGE_KEY  = 'bach_party_planner_v1';
 const ACTIVITY_KEY = 'bach_party_activity_v1';
-const REPO_KEY     = 'gh_repo_bach_party';
-const TOKEN_KEY    = 'gh_pat_bach_party';
+const SB_URL  = 'https://scvctpmboiwirsnlsdts.supabase.co';
+const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNjdmN0cG1ib2l3aXJzbmxzZHRzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE1NDIxODIsImV4cCI6MjA5NzExODE4Mn0.RdDOGKA4lOVRkzMjsq5SbLtCttQTrkLtIBPvi421cn0';
+const SB_HEADERS = { 'apikey': SB_KEY, 'Authorization': 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' };
 
 function uid() { return '_' + Math.random().toString(36).slice(2, 9); }
 function today() { return new Date().toISOString().slice(0,10); }
@@ -1361,158 +1356,99 @@ document.getElementById('main').addEventListener('scroll', () => {
 });
 
 // ═══════════════════════════════════════════════════
-//  GITHUB SYNC
+//  SUPABASE SYNC
 // ═══════════════════════════════════════════════════
-function getToken() {
-  const hash = window.location.hash.slice(1);
-  if (hash && (hash.startsWith('ghp_') || hash.startsWith('github_pat_'))) {
-    localStorage.setItem(TOKEN_KEY, hash); return hash;
-  }
-  return localStorage.getItem(TOKEN_KEY) || '';
-}
-function getRepo() {
-  return 'Gidi420/Adi-Bach';
-}
-
 function setSyncStatus(st, label) {
   document.getElementById('sync-dot').className = st;
   document.getElementById('sync-label').textContent = label;
 }
 
-let _lastETag = null, _lastGHTimestamp = null;
+let _lastRemoteTs = null;
+let _syncTimer = null;
+let _initialSyncDone = false;
 
-async function syncFromGitHub() {
-  const token = getToken();
-  const repo  = getRepo();
-  if (!repo) { setSyncStatus('notoken', 'No repo'); return false; }
-
-  const GH_API = `https://api.github.com/repos/${repo}/contents/data.json`;
-  const GH_RAW = `https://raw.githubusercontent.com/${repo}/main/data.json`;
-
-  if (token) {
-    try {
-      const headers = { 'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + token };
-      if (_lastETag) headers['If-None-Match'] = _lastETag;
-      const resp = await fetch(GH_API, { headers, cache: 'no-store' });
-      if (resp.status === 304) { setSyncStatus('synced', 'Synced ✓'); return true; }
-      if (resp.ok) {
-        _lastETag = resp.headers.get('ETag') || null;
-        const file = await resp.json();
-        const raw  = atob(file.content.replace(/\n/g, ''));
-        const data = JSON.parse(decodeURIComponent(escape(raw)));
-        _lastGHTimestamp = data?.state?.updated || null;
-        return applyRemote(data, true);
-      }
-    } catch(e) { console.error('API sync error:', e); }
-  }
-
+async function syncFromSupabase() {
   try {
-    const resp = await fetch(GH_RAW + '?v=' + Date.now(), { cache: 'no-store' });
-    if (!resp.ok) { setSyncStatus('error', 'Fetch failed ' + resp.status); return false; }
-    const data = await resp.json();
-    _lastGHTimestamp = data?.state?.updated || null;
-    return applyRemote(data, false);
+    const resp = await fetch(`${SB_URL}/rest/v1/planner?id=eq.1&select=data`, { headers: SB_HEADERS, cache: 'no-store' });
+    if (!resp.ok) { setSyncStatus('error', 'Fetch error ' + resp.status); return false; }
+    const rows = await resp.json();
+    if (!rows.length) { setSyncStatus('error', 'No data row'); return false; }
+    const data = JSON.parse(rows[0].data || '{}');
+    if (data && data.state && data.state.chapters) {
+      const localTs  = state?.updated  ? new Date(state.updated).getTime()  : 0;
+      const remoteTs = data.state.updated ? new Date(data.state.updated).getTime() : 0;
+      _lastRemoteTs = remoteTs;
+      if (remoteTs > localTs) {
+        state    = data.state;
+        activity = data.activity || [];
+        localStorage.setItem(STORAGE_KEY,  JSON.stringify(state));
+        localStorage.setItem(ACTIVITY_KEY, JSON.stringify(activity));
+        render();
+      }
+    }
+    setSyncStatus('synced', 'Synced ✓');
+    return true;
   } catch(e) {
     setSyncStatus('error', 'Offline?');
     return false;
   }
 }
 
-function applyRemote(data, hasToken) {
-  if (data && data.state && data.state.chapters) {
-    const localTs = state?.updated ? new Date(state.updated).getTime() : 0;
-    const ghTs    = _lastGHTimestamp ? new Date(_lastGHTimestamp).getTime() : 0;
-    if (ghTs > localTs) {
-      state = data.state; activity = data.activity || [];
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      localStorage.setItem(ACTIVITY_KEY, JSON.stringify(activity));
-      render();
-    }
-    setSyncStatus(hasToken ? 'synced' : 'notoken', hasToken ? 'Synced ✓' : 'Read-only');
-    return true;
-  }
-  setSyncStatus('error', 'Bad data'); return false;
-}
-
-async function pushToGitHub() {
-  const token = getToken();
-  const repo  = getRepo();
-  if (!token || !repo) { setSyncStatus('notoken', repo ? 'No token' : 'No repo'); return; }
+async function pushToSupabase() {
   setSyncStatus('syncing', 'Saving…');
-  const GH_API = `https://api.github.com/repos/${repo}/contents/data.json`;
-  const headers = { 'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' };
   try {
-    let sha = null;
-    const getResp = await fetch(GH_API, { headers });
-    if (getResp.ok) sha = (await getResp.json()).sha;
     const payload = JSON.stringify({ state, activity });
-    const encoded = btoa(unescape(encodeURIComponent(payload)));
-    const body = { message: 'Update planner data', content: encoded };
-    if (sha) body.sha = sha;
-    const putResp = await fetch(GH_API, { method: 'PUT', headers, body: JSON.stringify(body) });
-    if (putResp.ok) { _lastETag = null; await syncFromGitHub(); }
-    else setSyncStatus('error', putResp.status === 401 ? 'Bad token' : 'Error ' + putResp.status);
+    const resp = await fetch(`${SB_URL}/rest/v1/planner?id=eq.1`, {
+      method: 'PATCH',
+      headers: { ...SB_HEADERS, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ data: payload })
+    });
+    if (resp.ok) { setSyncStatus('synced', 'Synced ✓'); }
+    else { setSyncStatus('error', 'Save error ' + resp.status); }
   } catch(e) { setSyncStatus('error', 'Offline?'); }
 }
 
-setInterval(syncFromGitHub, 8000);
-
-let _syncTimer = null, _initialSyncDone = false;
+setInterval(syncFromSupabase, 5000);
 
 function scheduleSyncToGitHub() {
   if (!_initialSyncDone) return;
   clearTimeout(_syncTimer);
-  _syncTimer = setTimeout(pushToGitHub, 800);
+  _syncTimer = setTimeout(pushToSupabase, 800);
 }
 
-// ── Settings modal ──
+// ── Settings modal (kept for UI, no longer needed for sync) ──
 function openSettings() {
-  document.getElementById('settings-token-input').value = getToken();
   document.getElementById('settings-msg').style.display = 'none';
   document.getElementById('settings-overlay').style.display = 'flex';
 }
 function closeSettings() { document.getElementById('settings-overlay').style.display = 'none'; }
-async function saveToken() {
-  const token = document.getElementById('settings-token-input').value.trim();
-  if (!token) { showSettingsMsg('Please enter a token.', '#EF4444'); return; }
-  localStorage.setItem(TOKEN_KEY, token);
-  closeSettings();
-  await pushToGitHub();
-}
-function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
-  document.getElementById('settings-token-input').value = '';
-  showSettingsMsg('Token cleared.', '#64748B');
-  setSyncStatus('notoken', 'No token');
-}
+async function saveToken() { closeSettings(); }
+function clearToken() {}
 function showSettingsMsg(msg, color) {
   const el = document.getElementById('settings-msg');
   el.textContent = msg; el.style.color = color; el.style.display = 'block';
 }
 document.getElementById('settings-overlay').addEventListener('click', function(e) { if (e.target === this) closeSettings(); });
 
-window.addEventListener('beforeunload', () => { if (_syncTimer) { clearTimeout(_syncTimer); pushToGitHub(); } });
+window.addEventListener('beforeunload', () => { if (_syncTimer) { clearTimeout(_syncTimer); pushToSupabase(); } });
 
 // ═══════════════════════════════════════════════════
 //  BOOT
 // ═══════════════════════════════════════════════════
 (async () => {
   render();
-  const repo = getRepo();
-  if (!repo) { setSyncStatus('notoken', 'No repo'); _initialSyncDone = true; return; }
   setSyncStatus('syncing', 'Loading…');
   const localTsBeforeSync = state?.updated ? new Date(state.updated).getTime() : 0;
   let ok = false;
-  for (let attempt = 0; attempt < 4 && !ok; attempt++) {
-    if (attempt > 0) await new Promise(r => setTimeout(r, 2500));
-    ok = await syncFromGitHub();
+  for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
+    ok = await syncFromSupabase();
   }
-  if (!ok) setSyncStatus('error', 'Sync failed — check connection');
+  if (!ok) setSyncStatus('error', 'Sync failed');
   _initialSyncDone = true;
-  const ghTs = _lastGHTimestamp ? new Date(_lastGHTimestamp).getTime() : 0;
   const defaultTs = new Date('2000-01-02').getTime();
-  if (ok && localTsBeforeSync > defaultTs && localTsBeforeSync > ghTs && getToken()) {
-    setTimeout(pushToGitHub, 500);
+  if (ok && localTsBeforeSync > defaultTs && localTsBeforeSync > (_lastRemoteTs || 0)) {
+    setTimeout(pushToSupabase, 500);
   }
 })();
 </script>
