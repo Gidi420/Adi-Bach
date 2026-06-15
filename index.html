@@ -554,10 +554,6 @@ body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: v
     </div>
     <p style="font-size:12px;color:#64748B;line-height:1.6">Sync your planner to a GitHub repository so all friends can see updates in real time. Create a public repo on GitHub, set the repo name below, and enter your Personal Access Token.</p>
     <div style="display:flex;flex-direction:column;gap:6px">
-      <label style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:.05em">GitHub Repo (username/repo-name)</label>
-      <input id="settings-repo-input" type="text" placeholder="Gidi420/bach-party-planner" style="border:1px solid #E2E8F0;border-radius:5px;padding:8px 10px;font-size:13px;outline:none;font-family:monospace">
-    </div>
-    <div style="display:flex;flex-direction:column;gap:6px">
       <label style="font-size:11px;font-weight:600;color:#64748B;text-transform:uppercase;letter-spacing:.05em">GitHub Personal Access Token</label>
       <input id="settings-token-input" type="password" placeholder="github_pat_…" style="border:1px solid #E2E8F0;border-radius:5px;padding:8px 10px;font-size:13px;outline:none;font-family:monospace">
       <span style="font-size:11px;color:#94A3B8">Token needs <code>repo</code> scope. Stored only in this browser's localStorage.</span>
@@ -1375,7 +1371,7 @@ function getToken() {
   return localStorage.getItem(TOKEN_KEY) || '';
 }
 function getRepo() {
-  return localStorage.getItem(REPO_KEY) || '';
+  return 'Gidi420/Adi-Bach';
 }
 
 function setSyncStatus(st, label) {
@@ -1471,18 +1467,14 @@ function scheduleSyncToGitHub() {
 
 // ── Settings modal ──
 function openSettings() {
-  document.getElementById('settings-repo-input').value  = getRepo();
   document.getElementById('settings-token-input').value = getToken();
   document.getElementById('settings-msg').style.display = 'none';
   document.getElementById('settings-overlay').style.display = 'flex';
 }
 function closeSettings() { document.getElementById('settings-overlay').style.display = 'none'; }
 async function saveToken() {
-  const repo  = document.getElementById('settings-repo-input').value.trim();
   const token = document.getElementById('settings-token-input').value.trim();
-  if (!repo)  { showSettingsMsg('Please enter a repo name.', '#EF4444'); return; }
   if (!token) { showSettingsMsg('Please enter a token.', '#EF4444'); return; }
-  localStorage.setItem(REPO_KEY,  repo);
   localStorage.setItem(TOKEN_KEY, token);
   closeSettings();
   await pushToGitHub();
